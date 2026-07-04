@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import { toast } from "sonner";
 import CitationPanel, { GradingResult, Citation } from "@/components/CitationPanel";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), {
@@ -24,6 +25,10 @@ export default function Home() {
     setGradingResult(null);
     setError(null);
     setIsGrading(true);
+
+    toast.success("PDF Uploaded", {
+      description: `File: ${selected.name} (${(selected.size / 1024 / 1024).toFixed(2)} MB)`,
+    });
 
     try {
       const formData = new FormData();
