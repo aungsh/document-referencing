@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import CitationPanel, { GradingResult, Citation } from "@/components/CitationPanel";
+import ImageViewer from "@/components/ImageViewer";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), {
   ssr: false,
@@ -12,28 +13,40 @@ const PdfViewer = dynamic(() => import("@/components/PdfViewer"), {
 });
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [activeFileIndex, setActiveFileIndex] = useState(0);
   const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hoveredCitation, setHoveredCitation] = useState<Citation | null>(null);
 
+  // Auto-switch tabs when hovering a citation
+  useEffect(() => {
+    if (hoveredCitation?.fileName) {
+      const idx = files.findIndex(f => f.name === hoveredCitation.fileName);
+      if (idx !== -1 && idx !== activeFileIndex) {
+        setActiveFileIndex(idx);
+      }
+    }
+  }, [hoveredCitation, files, activeFileIndex]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0];
-    if (!selected) return;
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) return;
     
-    setFile(selected);
+    setFiles(selectedFiles);
+    setActiveFileIndex(0);
     setGradingResult(null);
     setError(null);
     setIsGrading(true);
 
-    toast.success("PDF Uploaded", {
-      description: `File: ${selected.name} (${(selected.size / 1024 / 1024).toFixed(2)} MB)`,
+    toast.success("Files Uploaded", {
+      description: `${selectedFiles.length} file(s) selected for grading.`,
     });
 
     try {
       const formData = new FormData();
-      formData.append("file", selected);
+      selectedFiles.forEach(f => formData.append("file", f));
 
       const res = await fetch("/api/grade", {
         method: "POST",
@@ -69,18 +82,19 @@ export default function Home() {
         </Link>
       </header>
 
-      {!file && !isGrading && (
+      {files.length === 0 && !isGrading && (
         <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-muted rounded-xl bg-muted/5">
           <label className="flex flex-col items-center cursor-pointer p-8">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>
             </div>
-            <span className="text-lg font-medium mb-2">Upload Homework PDF</span>
-            <span className="text-sm text-muted-foreground">Only PDF files are supported</span>
+            <span className="text-lg font-medium mb-2">Upload Homework Files</span>
+            <span className="text-sm text-muted-foreground">Select one or more PDFs and Images</span>
             <input 
               type="file" 
               className="hidden" 
-              accept="application/pdf"
+              accept="application/pdf,image/*"
+              multiple
               onChange={handleFileUpload} 
             />
           </label>
@@ -99,19 +113,43 @@ export default function Home() {
           <p className="font-semibold mb-1">Error grading homework</p>
           <p className="text-sm">{error}</p>
           <button 
-            onClick={() => { setError(null); setFile(null); }}
+            onClick={() => { setError(null); setFiles([]); }}
             className="mt-3 text-sm underline cursor-pointer"
           >
-            Try another file
+            Try again
           </button>
         </div>
       )}
 
-      {file && gradingResult && (
+      {files.length > 0 && gradingResult && (
         <div className="flex-1 flex flex-row gap-4 md:gap-8 items-start">
-          {/* Left column: PDF Viewer */}
-          <div className="flex-1 min-w-0 sticky top-8 h-[calc(100vh-4rem)]">
-            <PdfViewer file={file} hoveredCitation={hoveredCitation} />
+          {/* Left column: Viewer(s) */}
+          <div className="flex-1 min-w-0 sticky top-8 h-[calc(100vh-4rem)] flex flex-col">
+            {files.length > 1 && (
+              <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 custom-scrollbar">
+                {files.map((f, i) => (
+                  <button 
+                    key={i} 
+                    onClick={() => setActiveFileIndex(i)}
+                    className={`px-3 py-1.5 text-xs font-mono rounded-md whitespace-nowrap transition-colors ${activeFileIndex === i ? 'bg-accent text-accent-foreground' : 'bg-muted/50 hover:bg-muted text-muted-foreground'}`}
+                  >
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            <div className="flex-1 min-h-0 bg-muted/10 border border-muted rounded-lg overflow-hidden flex flex-col">
+              {(() => {
+                const activeFile = files[activeFileIndex];
+                if (!activeFile) return null;
+                if (activeFile.type === "application/pdf") {
+                  return <PdfViewer file={activeFile} hoveredCitation={hoveredCitation} />;
+                } else {
+                  return <ImageViewer file={activeFile} hoveredCitation={hoveredCitation} />;
+                }
+              })()}
+            </div>
           </div>
 
           {/* Right column: Results Panel */}
@@ -119,7 +157,7 @@ export default function Home() {
             <div className="mb-4 pb-4 border-b border-muted flex justify-between items-center shrink-0">
               <h2 className="font-semibold">Grading Results</h2>
               <button 
-                onClick={() => { setFile(null); setGradingResult(null); }}
+                onClick={() => { setFiles([]); setGradingResult(null); }}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               >
                 Start Over
@@ -129,7 +167,6 @@ export default function Home() {
               result={gradingResult} 
               hoveredCitation={hoveredCitation}
               onHoverCitation={setHoveredCitation}
-              fileName={file.name}
             />
           </div>
         </div>

@@ -9,8 +9,10 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 
 export type Citation = {
   point: string;
+  fileName?: string;
   page?: number;
   quote?: string;
+  box_2d?: [number, number, number, number];
 };
 
 export type GradingResult = {
@@ -24,12 +26,10 @@ export default function CitationPanel({
   result,
   hoveredCitation,
   onHoverCitation,
-  fileName,
 }: {
   result: GradingResult | null;
   hoveredCitation: Citation | null;
   onHoverCitation: (citation: Citation | null) => void;
-  fileName: string;
 }) {
   if (!result) return null;
 
@@ -54,10 +54,10 @@ export default function CitationPanel({
                 onMouseLeave={() => onHoverCitation(null)}
               >
                 <div className="font-medium text-sm mb-2 text-foreground">{c.point}</div>
-                {c.quote && c.page && (
+                {(c.quote || c.box_2d) && (
                   <div className="flex flex-col gap-2 mt-2">
                     <div className="text-xs text-muted-foreground font-mono bg-muted/20 p-2 rounded border-l-2 border-muted">
-                      "{c.quote}"
+                      {c.box_2d ? "[Image Region Referenced]" : `"${c.quote}"`}
                     </div>
                     
                     {/* Filename hover pill */}
@@ -66,7 +66,7 @@ export default function CitationPanel({
                       isHovered ? "opacity-100" : "opacity-0"
                     )}>
                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
-                      {fileName} (Page {c.page})
+                      {c.fileName} {c.page ? `(Page ${c.page})` : ""}
                     </div>
                   </div>
                 )}
