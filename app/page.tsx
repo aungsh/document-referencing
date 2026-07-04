@@ -49,7 +49,7 @@ export default function Home() {
   };
 
   return (
-    <main className="flex-1 flex flex-col h-screen px-6 md:px-12 py-8 max-w-[1400px] mx-auto w-full">
+    <main className="flex-1 flex flex-col px-6 md:px-12 py-8 max-w-[1400px] mx-auto w-full">
       <header className="mb-8">
         <h1 className="text-3xl font-bold tracking-tight mb-2">Homework Grader</h1>
         <p className="text-sm text-muted-foreground font-mono">AI-Graded Homework with Source-Linked Citations</p>
@@ -94,14 +94,14 @@ export default function Home() {
       )}
 
       {file && gradingResult && (
-        <div className="flex-1 flex flex-col md:flex-row gap-8 min-h-0">
+        <div className="flex-1 flex flex-row gap-4 md:gap-8 items-start">
           {/* Left column: PDF Viewer */}
-          <div className="flex-1 min-w-0 h-full">
+          <div className="flex-1 min-w-0 sticky top-8 h-[calc(100vh-4rem)]">
             <PdfViewer file={file} hoveredCitation={hoveredCitation} />
           </div>
 
           {/* Right column: Results Panel */}
-          <div className="w-full md:w-1/3 min-w-[300px] h-full flex flex-col">
+          <div className="w-[350px] md:w-1/3 shrink-0 flex flex-col">
             <div className="mb-4 pb-4 border-b border-muted flex justify-between items-center shrink-0">
               <h2 className="font-semibold">Grading Results</h2>
               <button 
@@ -115,6 +115,7 @@ export default function Home() {
               result={gradingResult} 
               hoveredCitation={hoveredCitation}
               onHoverCitation={setHoveredCitation}
+              fileName={file.name}
             />
           </div>
         </div>

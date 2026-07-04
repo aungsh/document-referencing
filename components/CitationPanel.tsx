@@ -24,10 +24,12 @@ export default function CitationPanel({
   result,
   hoveredCitation,
   onHoverCitation,
+  fileName,
 }: {
   result: GradingResult | null;
   hoveredCitation: Citation | null;
   onHoverCitation: (citation: Citation | null) => void;
+  fileName: string;
 }) {
   if (!result) return null;
 
@@ -53,8 +55,19 @@ export default function CitationPanel({
               >
                 <div className="font-medium text-sm mb-2 text-foreground">{c.point}</div>
                 {c.quote && c.page && (
-                  <div className="text-xs text-muted-foreground font-mono bg-muted/20 p-2 rounded">
-                    Page {c.page}: "{c.quote}"
+                  <div className="flex flex-col gap-2 mt-2">
+                    <div className="text-xs text-muted-foreground font-mono bg-muted/20 p-2 rounded border-l-2 border-muted">
+                      "{c.quote}"
+                    </div>
+                    
+                    {/* Filename hover pill */}
+                    <div className={cn(
+                      "flex items-center gap-1.5 self-start text-[10px] font-mono px-2 py-1 rounded bg-muted/40 text-muted-foreground transition-opacity",
+                      isHovered ? "opacity-100" : "opacity-0"
+                    )}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      {fileName} (Page {c.page})
+                    </div>
                   </div>
                 )}
               </div>
@@ -66,7 +79,7 @@ export default function CitationPanel({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar">
+    <div className="flex-1 pr-4">
       <div className="mb-8">
         <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-4">
           Overall Summary

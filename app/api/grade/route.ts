@@ -64,7 +64,9 @@ export async function POST(req: NextRequest) {
 
     const uploadedFile = await ai.files.upload({
       file: tempFilePath,
-      mimeType: file.type,
+      config: {
+        mimeType: file.type,
+      }
     });
 
     const prompt = `Grade the submission and produce strengths, weaknesses, and talking points.
