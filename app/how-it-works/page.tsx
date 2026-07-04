@@ -17,83 +17,89 @@ export default function HowItWorks() {
           How it Works
         </h1>
         <p className="text-muted-foreground text-lg leading-relaxed">
-          The technical architecture behind AI-graded homework and source-linked citations.
+          Using the Gemini API to extract structured, source-linked citations from PDFs and images.
         </p>
       </div>
 
       <div className="space-y-16">
+
+        {/* 01 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            01. The Architecture (PDFs)
+            01. The Architecture
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              This demo uses the <strong>Gemini 2.5 Flash API</strong>.
+              Files are uploaded to the <strong>Gemini File API</strong>, then passed to <code>gemini-2.5-flash</code> with a strict JSON schema. The model must return a structured grading response where every point references its source material — either a text quote (PDF) or a bounding box (image).
             </p>
             <p>
-              When a PDF is uploaded, it is sent to the Gemini File API. We prompt the model with a strict JSON schema, instructing it to provide feedback and strictly include an <strong>exact, verbatim quote</strong> from the document for every point it makes.
-            </p>
-            <p>
-              On the frontend, we use <code>pdf.js</code> to extract the raw text layer of the PDF. When you hover over a citation, we run a fuzzy text search (using <code>fuse.js</code>) to find where that exact quote lives. We map those text nodes back to their spatial bounding boxes and draw a highlight overlay directly on the canvas.
+              On the frontend, hovering a citation triggers a highlight: a text overlay for PDFs (via <code>pdf.js</code> + fuzzy match), or a CSS bounding box drawn directly over the image.
             </p>
           </div>
         </section>
 
+        {/* 02 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            02. The Prompt & Schema
+            02. Referencing PDFs
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              To ensure the model returns citations that can be reliably mapped by our frontend, we use structured output and a highly specific prompt.
+              For PDFs, the model returns a <code>quote</code> (verbatim text) and <code>page</code> number. The frontend extracts the PDF text layer via <code>pdf.js</code> and runs a fuzzy search to find the matching text node and its coordinates.
             </p>
-            <div className="bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
-              <pre><code>{`const responseSchema = {
+          </div>
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre><code>{`// Schema
+const citationSchema = {
   type: Type.OBJECT,
   properties: {
-    overallSummary: { type: Type.STRING },
-    strengths: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          point: { type: Type.STRING },
-          page: { type: Type.INTEGER },
-          quote: { type: Type.STRING },
-        }
-      }
-    },
-    // ... same for weaknesses
-  }
+    point:    { type: Type.STRING },
+    fileName: { type: Type.STRING },
+    page:     { type: Type.INTEGER },
+    quote:    { type: Type.STRING },  // verbatim text from the PDF
+    box_2d:   { type: Type.ARRAY, items: { type: Type.INTEGER } },
+  },
 };
 
-const prompt = \`Grade the submission and produce strengths, weaknesses...
-For every point, include the **page number** and an **exact verbatim quote** (not paraphrased) from the document that supports it.
-Quotes should be short (one sentence or phrase); short quotes match more reliably against extracted PDF text.\`;`}</code></pre>
-            </div>
+// Prompt instruction for PDFs
+"If referencing a PDF: include the 'page' number and an exact
+verbatim 'quote'. Short quotes match more reliably."`}</code></pre>
           </div>
         </section>
 
+        {/* 03 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            03. Can this be done for Images?
+            03. Referencing Images
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              <strong>Yes.</strong> While the PDF approach relies on extracting a hidden text layer via the browser, doing this for images requires a different technique.
+              Gemini 2.5 Flash has native <strong>Spatial Understanding</strong>. For images, the model skips text and returns a <code>box_2d</code> array: <code>[ymin, xmin, ymax, xmax]</code> scaled 0 to 1000. The frontend converts these to CSS percentages and draws a highlight box directly on the image — no OCR needed.
             </p>
-            <p>
-              Gemini 2.5 Flash possesses native <strong>Spatial Understanding</strong>. Instead of asking for a text quote, you prompt the model to return 2D bounding box coordinates directly (formatted as <code>[ymin, xmin, ymax, xmax]</code>).
-            </p>
-            <p>
-              The model analyzes the image and returns the exact pixel coordinates of the referenced region. Your frontend simply draws a CSS box over the image at those coordinates, bypassing the need for OCR or text-matching libraries.
-            </p>
+          </div>
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre><code>{`// Prompt instruction for images
+"If referencing an image: DO NOT use 'quote'. Instead return
+'box_2d': [ymin, xmin, ymax, xmax] scaled 0–1000."
+
+// Frontend: convert box_2d to CSS and overlay on the <img>
+const box = hoveredCitation?.box_2d;
+const boxStyle = box ? {
+  top:    \`\${box[0] / 10}%\`,
+  left:   \`\${box[1] / 10}%\`,
+  height: \`\${(box[2] - box[0]) / 10}%\`,
+  width:  \`\${(box[3] - box[1]) / 10}%\`,
+} : null;
+
+// Rendered as an absolutely-positioned div over the image
+<div className="absolute border-2 border-accent" style={boxStyle} />`}</code></pre>
           </div>
         </section>
 
+        {/* 04 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            04. User Reassurance & Uploads
+            04. User Reassurance &amp; Uploads
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
@@ -104,6 +110,7 @@ Quotes should be short (one sentence or phrase); short quotes match more reliabl
             </p>
           </div>
         </section>
+
       </div>
 
       <div className="mt-20 pt-8 border-t border-muted">
@@ -118,3 +125,4 @@ Quotes should be short (one sentence or phrase); short quotes match more reliabl
     </main>
   );
 }
+
