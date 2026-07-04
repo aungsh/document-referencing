@@ -10,89 +10,177 @@ export default function HowItWorks() {
           href="/"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-8 font-mono"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m15 18-6-6 6-6" />
+          </svg>
           Back to Demo
         </Link>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-[1.1] mb-6">
           How it Works
         </h1>
         <p className="text-muted-foreground text-lg leading-relaxed">
-          Using the Gemini API to extract structured, source-linked citations from PDFs and images.
+          How to use the Gemini API to analyze documents and get back
+          structured, source-linked responses.
         </p>
       </div>
 
       <div className="space-y-16">
-
         {/* 01 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            01. The Architecture
+            01. The Core Idea
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Files are uploaded to the <strong>Gemini File API</strong>, then passed to <code>gemini-2.5-flash</code> with a strict JSON schema. The model must return a structured grading response where every point references its source material — either a text quote (PDF) or a bounding box (image).
+              The model reads the document as part of the prompt and generates a
+              response grounded in its contents. You don&apos;t need to extract
+              text yourself or build a RAG pipeline, the model does it natively.
             </p>
-            <p>
-              On the frontend, hovering a citation triggers a highlight: a text overlay for PDFs (via <code>pdf.js</code> + fuzzy match), or a CSS bounding box drawn directly over the image.
-            </p>
+          </div>
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre>
+              <code>{`// Step 1: Upload the file
+const uploadedFile = await ai.files.upload({
+  file: tempFilePath,
+  config: { mimeType: file.type },
+});
+
+// Step 2: Pass the fileUri into the prompt
+const response = await ai.models.generateContent({
+  model: "gemini-2.5-flash",
+  contents: [{
+    role: "user",
+    parts: [
+      // The document itself — Gemini reads this natively
+      { fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType } },
+      // Your instructions
+      { text: prompt },
+    ],
+  }],
+});`}</code>
+            </pre>
           </div>
         </section>
 
         {/* 02 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            02. Referencing PDFs
+            02. Getting Structured References Back
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              For PDFs, the model returns a <code>quote</code> (verbatim text) and <code>page</code> number. The frontend extracts the PDF text layer via <code>pdf.js</code> and runs a fuzzy search to find the matching text node and its coordinates.
+              By default, Gemini returns free-form text. To get back
+              machine-readable citations, you use{" "}
+              <strong>structured output</strong>, defining a JSON schema so the
+              model is forced to return a specific shape.
+            </p>
+            <p>
+              For each point the model makes, we instruct it to include the
+              source file name, the page number, and an exact verbatim quote
+              from the document. This is the key: the model is not summarizing
+              or paraphrasing, it must pull a real string directly from the
+              source.
             </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
-            <pre><code>{`// Schema
+            <pre>
+              <code>{`// Define the schema for each citation
 const citationSchema = {
   type: Type.OBJECT,
   properties: {
-    point:    { type: Type.STRING },
-    fileName: { type: Type.STRING },
-    page:     { type: Type.INTEGER },
-    quote:    { type: Type.STRING },  // verbatim text from the PDF
-    box_2d:   { type: Type.ARRAY, items: { type: Type.INTEGER } },
+    point:    { type: Type.STRING },   // the grading observation
+    fileName: { type: Type.STRING },   // which file it came from
+    page:     { type: Type.INTEGER },  // page number (PDFs)
+    quote:    { type: Type.STRING },   // verbatim text from the document
+    box_2d:   { type: Type.ARRAY },    // region coordinates (images)
   },
 };
 
-// Prompt instruction for PDFs
-"If referencing a PDF: include the 'page' number and an exact
-verbatim 'quote'. Short quotes match more reliably."`}</code></pre>
+// Pass the schema to the API call
+const response = await ai.models.generateContent({
+  model: "gemini-2.5-flash",
+  contents: [...],
+  config: {
+    responseMimeType: "application/json",
+    responseSchema: responseSchema,   // enforces the output shape
+  },
+});
+
+// The response is valid JSON matching your schema
+const result = JSON.parse(response.text);
+// result.strengths[0].quote === "exact text from the document"`}</code>
+            </pre>
           </div>
         </section>
 
         {/* 03 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            03. Referencing Images
+            03. PDFs vs Images
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Gemini 2.5 Flash has native <strong>Spatial Understanding</strong>. For images, the model skips text and returns a <code>box_2d</code> array: <code>[ymin, xmin, ymax, xmax]</code> scaled 0 to 1000. The frontend converts these to CSS percentages and draws a highlight box directly on the image — no OCR needed.
+              Both work the same way at the API level, you upload the file and
+              pass the <code>fileUri</code>. The difference is in what you ask
+              the model to return.
             </p>
+            <ul className="space-y-3 pl-4 border-l-2 border-muted">
+              <li>
+                <strong>PDFs:</strong> Ask the model for a <code>quote</code> (a
+                verbatim sentence from the text) and a <code>page</code> number.
+                The model can read the full text layer of a PDF natively.
+              </li>
+              <li>
+                <strong>Images:</strong> There is no text layer to quote.
+                Instead, Gemini&apos;s native{" "}
+                <strong>spatial understanding</strong> lets you ask it to return{" "}
+                <code>box_2d</code> coordinates, a bounding box{" "}
+                <code>[ymin, xmin, ymax, xmax]</code> (scaled 0–1000) pointing
+                to the exact region of the image it is referencing. No OCR
+                required.
+              </li>
+            </ul>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
-            <pre><code>{`// Prompt instruction for images
-"If referencing an image: DO NOT use 'quote'. Instead return
-'box_2d': [ymin, xmin, ymax, xmax] scaled 0–1000."
+            <pre>
+              <code>{`// Prompt that handles both file types
+const prompt = \`
+The uploaded files are:
+File 1: "homework.pdf"
+File 2: "photo.png"
 
-// Frontend: convert box_2d to CSS and overlay on the <img>
-const box = hoveredCitation?.box_2d;
-const boxStyle = box ? {
-  top:    \`\${box[0] / 10}%\`,
-  left:   \`\${box[1] / 10}%\`,
-  height: \`\${(box[2] - box[0]) / 10}%\`,
-  width:  \`\${(box[3] - box[1]) / 10}%\`,
-} : null;
+For every point, set 'fileName' to the exact filename above.
+- PDF: include 'page' and a verbatim 'quote' from the text.
+- Image: return 'box_2d' as [ymin, xmin, ymax, xmax] (0–1000).
+\`;
 
-// Rendered as an absolutely-positioned div over the image
-<div className="absolute border-2 border-accent" style={boxStyle} />`}</code></pre>
+// Example output from Gemini:
+{
+  "strengths": [
+    {
+      "point": "Clear argument structure",
+      "fileName": "homework.pdf",
+      "page": 2,
+      "quote": "The evidence suggests a strong correlation..."
+    },
+    {
+      "point": "Neat diagram layout",
+      "fileName": "photo.png",
+      "box_2d": [120, 80, 400, 650]
+    }
+  ]
+}`}</code>
+            </pre>
           </div>
         </section>
 
@@ -103,21 +191,28 @@ const boxStyle = box ? {
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              To reassure users, you can show a popup confirming their document was successfully received, then display the raw content on screen. <strong>This is entirely independent of the Gemini API</strong>.
+              To reassure users, you can show a popup confirming their document
+              was received and display the raw content on screen.{" "}
+              <strong>This is independent of the Gemini API</strong>.
             </p>
             <p>
-              Showing an upload confirmation is standard frontend UI, triggered when a file successfully uploads to your database or cloud storage (like S3). Similarly, rendering the raw document alongside AI feedback is achieved by passing the file URL to your frontend viewer.
+              The upload confirmation is standard frontend UI triggered when a
+              file is saved to your database or cloud storage (e.g., S3).
+              Showing the raw document alongside the AI response is then just a
+              matter of rendering the file from its stored URL in a viewer.
             </p>
           </div>
         </section>
-
       </div>
 
       <div className="mt-20 pt-8 border-t border-muted">
         <Link
           href="/"
           className="inline-flex h-10 items-center justify-center rounded-lg px-6 text-sm font-semibold transition-opacity hover:opacity-90"
-          style={{ background: 'var(--color-accent)', color: 'var(--color-accent-foreground)' }}
+          style={{
+            background: "var(--color-accent)",
+            color: "var(--color-accent-foreground)",
+          }}
         >
           Try the Demo
         </Link>
@@ -125,4 +220,3 @@ const boxStyle = box ? {
     </main>
   );
 }
-
