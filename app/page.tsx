@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import CitationPanel, { GradingResult, Citation } from "@/components/CitationPanel";
@@ -55,9 +56,17 @@ export default function Home() {
 
   return (
     <main className="flex-1 flex flex-col px-6 md:px-12 py-8 max-w-[1400px] mx-auto w-full">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight mb-2">Homework Grader</h1>
-        <p className="text-sm text-muted-foreground font-mono">AI-Graded Homework with Source-Linked Citations</p>
+      <header className="mb-8 flex items-end justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight mb-2">Homework Grader</h1>
+          <p className="text-sm text-muted-foreground font-mono">AI-Graded Homework with Source-Linked Citations</p>
+        </div>
+        <Link 
+          href="/how-it-works"
+          className="text-sm font-mono text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
+        >
+          How it Works
+        </Link>
       </header>
 
       {!file && !isGrading && (
