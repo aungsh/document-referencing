@@ -68,12 +68,18 @@ export async function POST(req: NextRequest) {
       uploadedFiles.push({ uploadedFile, originalName: file.name });
     }
 
-    const prompt = `Grade the submission and produce strengths, weaknesses, and talking points.
-You have been provided with one or more files (PDFs and/or images). 
-For every point you make, you MUST specify the 'fileName' of the document you are referencing.
+    const fileManifest = uploadedFiles
+      .map((f, i) => `File ${i + 1}: "${f.originalName}"`)
+      .join("\n");
+
+    const prompt = `Grade the submission. The uploaded files are:
+${fileManifest}
+
+Produce strengths, weaknesses, and talking points.
+For every point you make, you MUST set 'fileName' to the EXACT filename listed above (e.g. "${uploadedFiles[0]?.originalName}").
 - If referencing a PDF: include the 'page' number and an exact verbatim 'quote' (not paraphrased). Short quotes match more reliably.
 - If referencing an image: DO NOT use 'quote'. Instead, return 'box_2d', which is a 2D bounding box [ymin, xmin, ymax, xmax] scaled from 0 to 1000 representing the region in the image.
-If a point isn't tied to a specific passage, it's fine to omit quote/box_2d, but still provide fileName if applicable.`;
+If a point isn't tied to a specific passage, still provide the correct fileName.`;
 
     const fileParts = uploadedFiles.map(f => ({ 
       fileData: { fileUri: f.uploadedFile.uri, mimeType: f.uploadedFile.mimeType } 

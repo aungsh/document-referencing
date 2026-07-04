@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Citation } from "./CitationPanel";
 
 export default function ImageViewer({ 
@@ -11,6 +11,7 @@ export default function ImageViewer({
   hoveredCitation: Citation | null;
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -18,25 +19,34 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  const isRelevantCitation = hoveredCitation && hoveredCitation.fileName === file.name && hoveredCitation.box_2d;
+  const box = hoveredCitation?.fileName === file.name ? hoveredCitation.box_2d : null;
+
+  // box_2d is [ymin, xmin, ymax, xmax] scaled 0–1000
+  // Percentages are relative to the img element itself
+  const boxStyle = box ? {
+    top:    `${box[0] / 10}%`,
+    left:   `${box[1] / 10}%`,
+    height: `${(box[2] - box[0]) / 10}%`,
+    width:  `${(box[3] - box[1]) / 10}%`,
+  } : null;
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center bg-muted/10 border border-muted rounded-lg overflow-hidden">
+    <div className="relative w-full h-full flex items-center justify-center bg-muted/10 overflow-hidden">
       {objectUrl && (
-        <div className="relative inline-block max-w-full max-h-full">
-          <img 
-            src={objectUrl} 
-            alt={file.name} 
-            className="max-w-full max-h-[calc(100vh-4rem)] object-contain block"
+        <div className="relative">
+          <img
+            ref={imgRef}
+            src={objectUrl}
+            alt={file.name}
+            className="max-w-full max-h-[calc(100vh-8rem)] object-contain block"
           />
-          {isRelevantCitation && (
-            <div 
-              className="absolute border-2 border-accent bg-accent/20 pointer-events-none transition-all duration-300 shadow-[0_0_15px_rgba(var(--color-accent),0.5)]"
+          {boxStyle && (
+            <div
+              className="absolute border-2 border-accent bg-accent/25 pointer-events-none"
               style={{
-                top: `${hoveredCitation.box_2d![0] / 10}%`,
-                left: `${hoveredCitation.box_2d![1] / 10}%`,
-                height: `${(hoveredCitation.box_2d![2] - hoveredCitation.box_2d![0]) / 10}%`,
-                width: `${(hoveredCitation.box_2d![3] - hoveredCitation.box_2d![1]) / 10}%`,
+                ...boxStyle,
+                boxShadow: "0 0 0 2px oklch(0.87 0.22 130 / 0.4), 0 0 20px oklch(0.87 0.22 130 / 0.3)",
+                transition: "all 0.2s ease",
               }}
             />
           )}
@@ -45,3 +55,4 @@ export default function ImageViewer({
     </div>
   );
 }
+
