@@ -12,6 +12,9 @@ export default function ImageViewer({
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Stores the actual rendered image rect within the element (accounting for object-contain)
+  const [renderedRect, setRenderedRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -19,19 +22,50 @@ export default function ImageViewer({
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
+  // Compute the actual rendered area of the image inside its element box
+  const computeRenderedRect = () => {
+    const img = imgRef.current;
+    if (!img || !img.naturalWidth) return;
+    const elemW = img.clientWidth;
+    const elemH = img.clientHeight;
+    const natW = img.naturalWidth;
+    const natH = img.naturalHeight;
+    // object-contain: scale to fit while preserving aspect ratio
+    const scale = Math.min(elemW / natW, elemH / natH);
+    const renderedW = natW * scale;
+    const renderedH = natH * scale;
+    setRenderedRect({
+      top: (elemH - renderedH) / 2,
+      left: (elemW - renderedW) / 2,
+      width: renderedW,
+      height: renderedH,
+    });
+  };
+
+  useEffect(() => {
+    const img = imgRef.current;
+    if (!img) return;
+    img.addEventListener("load", computeRenderedRect);
+    const ro = new ResizeObserver(computeRenderedRect);
+    ro.observe(img);
+    return () => {
+      img.removeEventListener("load", computeRenderedRect);
+      ro.disconnect();
+    };
+  }, [objectUrl]);
+
   const box = hoveredCitation?.fileName === file.name ? hoveredCitation.box_2d : null;
 
-  // box_2d is [ymin, xmin, ymax, xmax] scaled 0–1000
-  // Percentages are relative to the img element itself
-  const boxStyle = box ? {
-    top:    `${box[0] / 10}%`,
-    left:   `${box[1] / 10}%`,
-    height: `${(box[2] - box[0]) / 10}%`,
-    width:  `${(box[3] - box[1]) / 10}%`,
+  // Position the highlight over the actual rendered image pixels, not the element bounding box
+  const boxStyle = (box && renderedRect) ? {
+    top:    `${renderedRect.top  + (box[0] / 1000) * renderedRect.height}px`,
+    left:   `${renderedRect.left + (box[1] / 1000) * renderedRect.width}px`,
+    height: `${((box[2] - box[0]) / 1000) * renderedRect.height}px`,
+    width:  `${((box[3] - box[1]) / 1000) * renderedRect.width}px`,
   } : null;
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center bg-muted/10 overflow-hidden">
+    <div ref={containerRef} className="relative w-full h-full flex items-center justify-center bg-muted/10 overflow-hidden">
       {objectUrl && (
         <div className="relative">
           <img
@@ -55,4 +89,3 @@ export default function ImageViewer({
     </div>
   );
 }
-

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { writeFile } from "fs/promises";
 import path from "path";
@@ -24,8 +24,8 @@ const citationSchema: Schema = {
   properties: {
     fileName: { type: Type.STRING },
     page: { type: Type.INTEGER },
-    box_2d: { 
-      type: Type.ARRAY, 
+    box_2d: {
+      type: Type.ARRAY,
       items: { type: Type.INTEGER },
       description: "Bounding box [ymin, xmin, ymax, xmax] scaled 0-1000"
     },
@@ -65,59 +65,64 @@ const responseSchema: Schema = {
 };
 
 export async function POST(req: NextRequest) {
-  try {
-    const formData = await req.formData();
-    const files = formData.getAll("file") as File[];
-    if (!files || files.length === 0) {
-      return NextResponse.json({ error: "No files provided" }, { status: 400 });
-    }
+  const encoder = new TextEncoder();
 
-    const uploadedFiles = [];
-    for (const file of files) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      const safeName = file.name.replace(/[^\x00-\x7F]/g, "_");
-      const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${safeName}`);
-      await writeFile(tempFilePath, buffer);
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (event: object) => {
+        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+      };
 
-      const uploadedFile = await ai.files.upload({
-        file: tempFilePath,
-        config: {
-          mimeType: file.type,
-          displayName: file.name,
+      try {
+        const formData = await req.formData();
+        const files = formData.getAll("file") as File[];
+        if (!files || files.length === 0) {
+          emit({ type: "error", message: "No files provided" });
+          controller.close();
+          return;
         }
-      });
-      uploadedFiles.push({ uploadedFile, originalName: file.name });
-    }
 
-    const fileManifest = uploadedFiles
-      .map((f, i) => `File ${i + 1}: "${f.originalName}"`)
-      .join("\n");
-      
-    const fileParts = uploadedFiles.map(f => ({ 
-      fileData: { fileUri: f.uploadedFile.uri, mimeType: f.uploadedFile.mimeType } 
-    }));
+        // Stage 1: Upload
+        emit({ type: "step", index: 0, label: "Uploading files to Gemini..." });
+        const uploadedFiles = [];
+        for (const file of files) {
+          const buffer = Buffer.from(await file.arrayBuffer());
+          const safeName = file.name.replace(/[^\x00-\x7F]/g, "_");
+          const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${safeName}`);
+          await writeFile(tempFilePath, buffer);
+          const uploadedFile = await ai.files.upload({
+            file: tempFilePath,
+            config: { mimeType: file.type, displayName: file.name },
+          });
+          uploadedFiles.push({ uploadedFile, originalName: file.name });
+        }
+        emit({ type: "step_done", index: 0 });
 
-    // Stage 1: Document Analysis
-    const metadataPrompt = `Analyze the uploaded documents. Return the primary subject, assignment type, estimated education level, language, and your confidence score (0 to 1).`;
-    const metadataResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        { role: "user", parts: [...fileParts, { text: metadataPrompt }] }
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: metadataSchema,
-      },
-    });
+        const fileManifest = uploadedFiles.map((f, i) => `File ${i + 1}: "${f.originalName}"`).join("\n");
+        const fileParts = uploadedFiles.map(f => ({
+          fileData: { fileUri: f.uploadedFile.uri, mimeType: f.uploadedFile.mimeType }
+        }));
 
-    if (!metadataResponse.text) throw new Error("No metadata response");
-    const metadata = JSON.parse(metadataResponse.text);
+        // Stage 2: Document Analysis
+        emit({ type: "step", index: 1, label: "Analysing document..." });
+        const metadataPrompt = `Analyze the uploaded documents. Return the primary subject, assignment type, estimated education level, language, and your confidence score (0 to 1).`;
+        const metadataResponse = await ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: [{ role: "user", parts: [...fileParts, { text: metadataPrompt }] }],
+          config: { responseMimeType: "application/json", responseSchema: metadataSchema },
+        });
+        if (!metadataResponse.text) throw new Error("No metadata response");
+        const metadata = JSON.parse(metadataResponse.text);
+        emit({ type: "step_done", index: 1, detail: metadata.subject });
 
-    // Stage 2: Rubric Selection
-    const rubric = getRubricForSubject(metadata.subject);
+        // Stage 3: Rubric Selection
+        emit({ type: "step", index: 2, label: `Selecting rubric for ${metadata.subject}...` });
+        const rubric = getRubricForSubject(metadata.subject);
+        emit({ type: "step_done", index: 2 });
 
-    // Stage 3 & 4: Grading & Citation Extraction
-    const gradingPrompt = `You are an expert teacher. The uploaded files are:
+        // Stage 4: Grading & Citation Extraction
+        emit({ type: "step", index: 3, label: "Grading submission..." });
+        const gradingPrompt = `You are an expert teacher. The uploaded files are:
 ${fileManifest}
 
 Apply the following grading rubric based on the detected subject (${metadata.subject}):
@@ -125,53 +130,61 @@ ${rubric}
 
 Provide an estimated score, overall summary, criteria-based feedback, and discussion questions.
 For every citation in your criteria cards, you MUST set 'fileName' to the EXACT filename listed above.
-- For citations, DO NOT use quotes. Instead, return 'box_2d', which is a 2D bounding box [ymin, xmin, ymax, xmax] scaled from 0 to 1000 representing the region referenced. 
+- For citations, DO NOT use quotes. Instead, return 'box_2d', which is a 2D bounding box [ymin, xmin, ymax, xmax] scaled from 0 to 1000 representing the region referenced.
 - For PDFs, you MUST also include the 'page' number.
 - Include a confidence score (0-100) for your citation accuracy.
 If a point isn't tied to a specific passage, still provide the correct fileName but omit box_2d.`;
 
-    const gradingResponse = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        { role: "user", parts: [...fileParts, { text: gradingPrompt }] }
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: responseSchema,
-      },
-    });
+        const gradingResponse = await ai.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: [{ role: "user", parts: [...fileParts, { text: gradingPrompt }] }],
+          config: { responseMimeType: "application/json", responseSchema: responseSchema },
+        });
+        if (!gradingResponse.text) throw new Error("No grading response");
+        const result = JSON.parse(gradingResponse.text);
+        emit({ type: "step_done", index: 3 });
 
-    if (!gradingResponse.text) throw new Error("No grading response");
-    const result = JSON.parse(gradingResponse.text);
-
-    // Stage 5: Citation Validation
-    if (result.criteriaCards) {
-      for (const card of result.criteriaCards) {
-        if (card.citations) {
-          card.citations = card.citations.map((c: any) => {
-            // Reject low confidence
-            if (c.confidence < 70) {
-              delete c.box_2d;
-              delete c.page;
-            } else if (c.box_2d && Array.isArray(c.box_2d) && c.box_2d.length === 4) {
-              const [ymin, xmin, ymax, xmax] = c.box_2d;
-              const area = (ymax - ymin) * (xmax - xmin);
-              // Reject full page highlights (> 80% of 1000x1000)
-              if (area > 800000) {
-                delete c.box_2d;
-                delete c.page;
-              }
+        // Stage 5: Citation Validation
+        emit({ type: "step", index: 4, label: "Validating citations..." });
+        if (result.criteriaCards) {
+          for (const card of result.criteriaCards) {
+            if (card.citations) {
+              card.citations = card.citations.map((c: any) => {
+                if (c.confidence < 70) {
+                  delete c.box_2d;
+                  delete c.page;
+                } else if (c.box_2d && Array.isArray(c.box_2d) && c.box_2d.length === 4) {
+                  const [ymin, xmin, ymax, xmax] = c.box_2d;
+                  const area = (ymax - ymin) * (xmax - xmin);
+                  if (area > 8000000) {
+                    delete c.box_2d;
+                    delete c.page;
+                  }
+                }
+                return c;
+              });
             }
-            return c;
-          });
+          }
         }
+        emit({ type: "step_done", index: 4 });
+
+        emit({ type: "result", data: result });
+        controller.close();
+
+      } catch (error: any) {
+        console.error("Error processing grading request:", error);
+        emit({ type: "error", message: error.message });
+        controller.close();
       }
-    }
+    },
+  });
 
-    return NextResponse.json(result);
-
-  } catch (error: any) {
-    console.error("Error processing grading request:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
+
