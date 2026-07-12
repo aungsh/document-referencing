@@ -159,10 +159,10 @@ If a point is not tied to any specific region, still include fileName but omit b
                   const [ymin, xmin, ymax, xmax] = c.box_2d;
                   const area = (ymax - ymin) * (xmax - xmin);
                   c.area = area;
-                  // if (area > 8000000) {
-                  //   delete c.box_2d;
-                  //   delete c.page;
-                  // }
+                  if (area > 800000) {
+                    delete c.box_2d;
+                    delete c.page;
+                  }
                 }
                 return c;
               });
