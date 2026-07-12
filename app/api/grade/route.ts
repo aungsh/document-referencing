@@ -129,11 +129,13 @@ Apply the following grading rubric based on the detected subject (${metadata.sub
 ${rubric}
 
 Provide an estimated score, overall summary, criteria-based feedback, and discussion questions.
-For every citation in your criteria cards, you MUST set 'fileName' to the EXACT filename listed above.
-- For citations, DO NOT use quotes. Instead, return 'box_2d', which is a 2D bounding box [ymin, xmin, ymax, xmax] scaled from 0 to 1000 representing the region referenced.
-- For PDFs, you MUST also include the 'page' number.
-- Include a confidence score (0-100) for your citation accuracy.
-If a point isn't tied to a specific passage, still provide the correct fileName but omit box_2d.`;
+
+For every citation in your criteria cards:
+- You MUST set 'fileName' to the EXACT filename listed above.
+- You MUST return 'box_2d' as [ymin, xmin, ymax, xmax] scaled from 0 to 1000 pointing to the exact region.
+- For PDF files, you MUST include the 'page' number (starting from 1). NEVER omit the page for a PDF citation.
+- Include a 'confidence' score from 0 to 100 for how accurately the box_2d matches the referenced region.
+If a point is not tied to any specific region, still include fileName but omit box_2d.`;
 
         const gradingResponse = await ai.models.generateContent({
           model: "gemini-3.1-flash-lite",
@@ -157,10 +159,10 @@ If a point isn't tied to a specific passage, still provide the correct fileName 
                   const [ymin, xmin, ymax, xmax] = c.box_2d;
                   const area = (ymax - ymin) * (xmax - xmin);
                   c.area = area;
-                  if (area > 8000000) {
-                    delete c.box_2d;
-                    delete c.page;
-                  }
+                  // if (area > 8000000) {
+                  //   delete c.box_2d;
+                  //   delete c.page;
+                  // }
                 }
                 return c;
               });

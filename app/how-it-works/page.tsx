@@ -226,45 +226,91 @@ export function getRubricForSubject(subject: string): string {
         {/* 06 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            06. How Box Coordinates Map to the Screen
+            06. Rendering Highlights Accurately
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Gemini returns bounding boxes as <code>[ymin, xmin, ymax, xmax]</code>, scaled from 0 to 1000, where 0 is the top-left corner of the image or page and 1000 is the bottom-right.
+              Gemini returns bounding boxes as <code>[ymin, xmin, ymax, xmax]</code>, each value scaled from 0 to 1000 where 0 is the top-left corner and 1000 is the bottom-right. Getting those coordinates to appear in exactly the right place on screen requires different approaches for images and PDFs.
+            </p>
+
+            <h3 className="font-semibold pt-2">Images: accounting for letterboxing</h3>
+            <p>
+              Images are displayed with <code>object-contain</code>, which preserves the aspect ratio by adding empty space (letterboxing) along whichever axis does not fill the element. The overlay div is positioned absolutely inside the same container, so if you place it at <code>top: box[0]/10%</code> you are computing a percentage of the <em>element bounding box</em>, not the <em>actual pixel area of the image</em>. On any image that is not perfectly square, the letterbox offset shifts every box by the wrong amount.
             </p>
             <p>
-              <strong>For images:</strong> The browser renders the image with <code>object-contain</code>, which can add empty space (letterboxing) on either side to preserve the aspect ratio. The frontend measures the natural pixel dimensions of the image and the actual rendered element size, calculates exactly how much letterboxing exists, and then converts the 0-to-1000 coordinates into precise pixel positions. The highlight div is drawn over the actual image pixels, not the element bounding box.
+              The fix is to compute the rendered image rect explicitly: derive the scale factor from <code>Math.min(elemW/natW, elemH/natH)</code>, multiply back to get the rendered width and height, then calculate the top and left offsets as <code>(elemDim - renderedDim) / 2</code>. All four overlay positions are then in pixels relative to the image pixel area, not the element box. A <code>ResizeObserver</code> on the image element keeps this recomputed whenever the layout changes.
+            </p>
+
+            <h3 className="font-semibold pt-2">PDFs: why percentages give wrong positions</h3>
+            <p>
+              For PDF pages the letterbox problem does not apply, but a different CSS subtlety does. The overlay div uses <code>position: absolute</code> inside a <code>position: relative</code> wrapper. For absolutely-positioned elements, <code>height: X%</code> resolves to a percentage of the containing block's height. If that containing block's height is determined by its content flow rather than being explicitly set, some browsers resolve the percentage incorrectly or against the wrong measurement. The result is that vertical positions are rendered at the wrong offset even though horizontal positions look fine.
             </p>
             <p>
-              <strong>For PDFs:</strong> Each page is rendered onto a canvas by the PDF library. A <code>ResizeObserver</code> watches the canvas element and records its exact pixel width and height after each render. When a highlight is triggered, the 0-to-1000 coordinates are multiplied against those real canvas dimensions to produce pixel-accurate positions. This means the highlight stays correct even if the viewer is resized or the PDF page changes.
+              The correct approach is to avoid percentage heights entirely and instead measure the exact canvas pixel dimensions at runtime, then use <code>px</code> units.
+            </p>
+
+            <h3 className="font-semibold pt-2">PDFs: the timing problem</h3>
+            <p>
+              <code>react-pdf</code> renders a PDF page asynchronously. The canvas element appears in the DOM after React commits, often one animation frame after the React component finishes rendering. This means a <code>useEffect</code> that runs synchronously after render might query the canvas before it exists, returning zero dimensions.
+            </p>
+            <p>
+              Three mechanisms are layered together to guarantee a measurement is always captured:
+            </p>
+            <ul className="space-y-2 pl-4 border-l-2 border-muted">
+              <li>
+                <strong><code>useLayoutEffect</code></strong> fires synchronously after the DOM is mutated, before the browser paints. This catches the canvas immediately if react-pdf has added it by this point.
+              </li>
+              <li>
+                <strong><code>requestAnimationFrame</code></strong> is scheduled inside the layout effect. It fires after the next browser paint, catching the canvas in the common case where react-pdf finishes one frame after the React commit.
+              </li>
+              <li>
+                <strong><code>onRenderSuccess</code></strong> is a prop on the react-pdf <code>Page</code> component that fires when the library itself confirms rendering is complete. This is the most reliable signal but the least timely.
+              </li>
+            </ul>
+            <p>
+              A <code>ResizeObserver</code> on the wrapper div keeps all measurements updated if the window is resized after the initial paint.
             </p>
           </div>
-          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+          <div className="mt-6 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// Converting box_2d to pixel positions (images)
-const scale = Math.min(elemW / natW, elemH / natH); // object-contain scale
+              <code>{`// --- Images: letterbox-corrected pixel positions ---
+const scale = Math.min(elemW / natW, elemH / natH); // object-contain
 const renderedW = natW * scale;
 const renderedH = natH * scale;
-const offsetLeft = (elemW - renderedW) / 2; // letterbox gap
+const offsetLeft = (elemW - renderedW) / 2;
 const offsetTop  = (elemH - renderedH) / 2;
 
 const highlight = {
-  top:    offsetTop  + (box[0] / 1000) * renderedH,
-  left:   offsetLeft + (box[1] / 1000) * renderedW,
-  height: ((box[2] - box[0]) / 1000) * renderedH,
-  width:  ((box[3] - box[1]) / 1000) * renderedW,
+  top:    offsetTop  + (box[0] / 1000) * renderedH + "px",
+  left:   offsetLeft + (box[1] / 1000) * renderedW + "px",
+  height: ((box[2] - box[0]) / 1000) * renderedH   + "px",
+  width:  ((box[3] - box[1]) / 1000) * renderedW   + "px",
 };
 
-// For PDFs, same math but using canvas pixel dimensions directly
+// --- PDFs: measure actual canvas pixel size, then use px units ---
+// Three-layer approach to capture canvas dimensions reliably:
+
+useLayoutEffect(() => {
+  measureCanvas();                            // 1. sync after DOM commit
+  const raf = requestAnimationFrame(measureCanvas); // 2. after next paint
+  return () => cancelAnimationFrame(raf);
+}, [currentPage]);
+
+// 3. react-pdf fires this when the canvas is truly ready
+<Page onRenderSuccess={measureCanvas} ... />
+
+// Once measured, compute positions in px (not %)
+const { width: W, height: H } = pagePixelSize;
 const highlight = {
-  top:    (box[0] / 1000) * canvas.clientHeight,
-  left:   (box[1] / 1000) * canvas.clientWidth,
-  height: ((box[2] - box[0]) / 1000) * canvas.clientHeight,
-  width:  ((box[3] - box[1]) / 1000) * canvas.clientWidth,
+  top:    (box[0] / 1000) * H + "px",
+  left:   (box[1] / 1000) * W + "px",
+  height: ((box[2] - box[0]) / 1000) * H + "px",
+  width:  ((box[3] - box[1]) / 1000) * W + "px",
 };`}</code>
             </pre>
           </div>
         </section>
+
 
       </div>
 

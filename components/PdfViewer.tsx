@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -20,26 +20,36 @@ export default function PdfViewer({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageWrapperRef = useRef<HTMLDivElement>(null);
-  // Actual rendered pixel size of the PDF canvas (updated by ResizeObserver)
   const [pagePixelSize, setPagePixelSize] = useState<{ width: number; height: number } | null>(null);
 
-  // Observe the page wrapper for size changes (zoom, window resize, etc.)
+  // Read the actual canvas dimensions. react-pdf renders into a <canvas> element;
+  // we measure it directly so our overlay uses real pixels, not error-prone percentages.
+  const measureCanvas = useCallback(() => {
+    const canvas = pageWrapperRef.current?.querySelector("canvas");
+    if (canvas && canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+      setPagePixelSize({ width: canvas.clientWidth, height: canvas.clientHeight });
+    }
+  }, []);
+
+  // useLayoutEffect fires synchronously after every DOM commit.
+  // react-pdf may paint its canvas one animation frame later, so we also
+  // schedule a rAF as a reliable fallback.
+  useLayoutEffect(() => {
+    measureCanvas();
+    const raf = requestAnimationFrame(measureCanvas);
+    return () => cancelAnimationFrame(raf);
+  }, [currentPage, measureCanvas]);
+
+  // ResizeObserver keeps the measurement correct when the window is resized.
   useEffect(() => {
     const wrapper = pageWrapperRef.current;
     if (!wrapper) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        // The canvas inside the wrapper is the true rendered size.
-        const canvas = wrapper.querySelector("canvas");
-        if (canvas) {
-          setPagePixelSize({ width: canvas.clientWidth, height: canvas.clientHeight });
-        }
-      }
-    });
+    const ro = new ResizeObserver(measureCanvas);
     ro.observe(wrapper);
     return () => ro.disconnect();
-  }, [currentPage]); // re-observe when page changes since react-pdf remounts the canvas
+  }, [measureCanvas]);
 
+  // Auto-navigate to the cited page when hovering a citation.
   useEffect(() => {
     if (hoveredCitation?.page && hoveredCitation.page <= (numPages || 1)) {
       setCurrentPage(hoveredCitation.page);
@@ -52,17 +62,13 @@ export default function PdfViewer({
     setPagePixelSize(null);
   };
 
-  const onPageRenderSuccess = useCallback(() => {
-    const canvas = pageWrapperRef.current?.querySelector("canvas");
-    if (canvas) {
-      setPagePixelSize({ width: canvas.clientWidth, height: canvas.clientHeight });
-    }
-  }, []);
-
   if (!file) return null;
 
+  // Show the highlight when the file matches and either no page is specified
+  // (model omitted it) or the page matches the currently displayed page.
   const activeBox =
-    hoveredCitation?.page === currentPage && hoveredCitation?.fileName === file.name
+    hoveredCitation?.fileName === file.name &&
+    (hoveredCitation.page == null || hoveredCitation.page === currentPage)
       ? hoveredCitation.box_2d
       : null;
 
@@ -99,11 +105,11 @@ export default function PdfViewer({
           className="flex justify-center"
           loading={<div className="text-muted-foreground font-mono mt-10">Loading PDF...</div>}
         >
-          {/* pageWrapperRef wraps the canvas so we can measure it precisely */}
+          {/* pageWrapperRef gives us a stable DOM node to measure the canvas inside */}
           <div ref={pageWrapperRef} className="relative inline-block shadow-lg">
             <Page
               pageNumber={currentPage}
-              onRenderSuccess={onPageRenderSuccess}
+              onRenderSuccess={measureCanvas}
               renderAnnotationLayer={false}
               renderTextLayer={false}
               className="rounded overflow-hidden"
