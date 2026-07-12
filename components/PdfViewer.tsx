@@ -5,14 +5,9 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { Citation } from "./CitationPanel";
-import { matchQuote, BoundingBox } from "@/lib/matchQuote";
 import HighlightOverlay from "./HighlightOverlay";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs"; // Adjust extension if we used .mjs or .js
-
-type TextContentCache = {
-  [pageIndex: number]: any[];
-};
 
 export default function PdfViewer({
   file,
@@ -23,8 +18,6 @@ export default function PdfViewer({
 }) {
   const [numPages, setNumPages] = useState<number>();
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [textCache, setTextCache] = useState<TextContentCache>({});
-  const [highlights, setHighlights] = useState<BoundingBox[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,48 +26,19 @@ export default function PdfViewer({
       if (hoveredCitation.page <= (numPages || 1)) {
         setCurrentPage(hoveredCitation.page);
       }
-    } else {
-      setHighlights([]);
     }
   }, [hoveredCitation, numPages]);
-
-  useEffect(() => {
-    // When page or hover changes, compute highlights
-    if (hoveredCitation && hoveredCitation.quote && hoveredCitation.page === currentPage) {
-      const items = textCache[currentPage];
-      if (items) {
-        const boxes = matchQuote(hoveredCitation.quote, items);
-        if (boxes) {
-          setHighlights(boxes);
-        } else {
-          setHighlights([]);
-        }
-      }
-    } else {
-      setHighlights([]);
-    }
-  }, [currentPage, hoveredCitation, textCache]);
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
     setCurrentPage(1);
-    setTextCache({});
-    setHighlights([]);
-  };
-
-  const onPageLoadSuccess = async (page: any) => {
-    try {
-      const textContent = await page.getTextContent();
-      setTextCache((prev) => ({
-        ...prev,
-        [page.pageNumber]: textContent.items,
-      }));
-    } catch (e) {
-      console.error("Failed to extract text content", e);
-    }
   };
 
   if (!file) return null;
+
+  const activeBox = (hoveredCitation?.page === currentPage && hoveredCitation?.fileName === file.name) 
+    ? hoveredCitation.box_2d 
+    : null;
 
   return (
     <div className="flex flex-col h-full bg-muted/10 rounded-lg border border-muted overflow-hidden relative">
@@ -112,14 +76,12 @@ export default function PdfViewer({
           <div className="relative inline-block shadow-lg">
             <Page
               pageNumber={currentPage}
-              onLoadSuccess={onPageLoadSuccess}
               renderAnnotationLayer={false}
               renderTextLayer={true}
               className="rounded overflow-hidden"
               width={containerRef.current ? Math.min(containerRef.current.clientWidth - 32, 800) : 800}
             />
-            {/* The HighlightOverlay needs to be positioned over the page */}
-            <HighlightOverlay boxes={highlights} />
+            <HighlightOverlay box={activeBox} />
           </div>
         </Document>
       </div>
