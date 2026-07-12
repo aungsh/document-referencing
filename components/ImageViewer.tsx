@@ -3,12 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Citation } from "./CitationPanel";
 
-export default function ImageViewer({ 
-  file, 
-  hoveredCitation 
-}: { 
-  file: File; 
+export default function ImageViewer({
+  file,
+  hoveredCitation,
+  citationSourceName,
+  pageNumber,
+}: {
+  file: File;
   hoveredCitation: Citation | null;
+  citationSourceName?: string;
+  pageNumber?: number;
 }) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -54,7 +58,12 @@ export default function ImageViewer({
     };
   }, [objectUrl]);
 
-  const box = hoveredCitation?.fileName === file.name ? hoveredCitation.box_2d : null;
+  const sourceName = citationSourceName ?? file.name;
+  const citationMatchesSource = hoveredCitation?.fileName === sourceName;
+  const citationMatchesPage =
+    pageNumber == null || hoveredCitation?.page == null || hoveredCitation.page === pageNumber;
+  const box =
+    citationMatchesSource && citationMatchesPage ? hoveredCitation?.box_2d : null;
 
   // Position the highlight over the actual rendered image pixels, not the element bounding box
   const boxStyle = (box && renderedRect) ? {

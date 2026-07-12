@@ -4,6 +4,7 @@ import { writeFile } from "fs/promises";
 import path from "path";
 import os from "os";
 import { getRubricForSubject } from "@/rubrics";
+import { parsePdfPageImageName, normalizeCitationFileName } from "@/lib/pdfPageImageNames";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -84,7 +85,12 @@ export async function POST(req: NextRequest) {
 
         // Stage 1: Upload
         emit({ type: "step", index: 0, label: "Uploading files to Gemini..." });
-        const uploadedFiles = [];
+        const uploadedFiles: Array<{
+          uploadedFile: Awaited<ReturnType<typeof ai.files.upload>>;
+          originalName: string;
+          sourceName: string;
+          page?: number;
+        }> = [];
         for (const file of files) {
           const buffer = Buffer.from(await file.arrayBuffer());
           const safeName = file.name.replace(/[^\x00-\x7F]/g, "_");
@@ -94,11 +100,24 @@ export async function POST(req: NextRequest) {
             file: tempFilePath,
             config: { mimeType: file.type, displayName: file.name },
           });
-          uploadedFiles.push({ uploadedFile, originalName: file.name });
+          const parsedPageImage = parsePdfPageImageName(file.name);
+          uploadedFiles.push({
+            uploadedFile,
+            originalName: file.name,
+            sourceName: parsedPageImage?.sourceName ?? file.name,
+            page: parsedPageImage?.page,
+          });
         }
         emit({ type: "step_done", index: 0 });
 
-        const fileManifest = uploadedFiles.map((f, i) => `File ${i + 1}: "${f.originalName}"`).join("\n");
+        const fileManifest = uploadedFiles
+          .map((file, index) => {
+            if (file.page != null) {
+              return `File ${index + 1}: "${file.sourceName}" (page ${file.page})`;
+            }
+            return `File ${index + 1}: "${file.sourceName}"`;
+          })
+          .join("\n");
         const fileParts = uploadedFiles.map(f => ({
           fileData: { fileUri: f.uploadedFile.uri, mimeType: f.uploadedFile.mimeType }
         }));
@@ -131,9 +150,9 @@ ${rubric}
 Provide an estimated score, overall summary, criteria-based feedback, and discussion questions.
 
 For every citation in your criteria cards:
-- You MUST set 'fileName' to the EXACT filename listed above.
-- You MUST return 'box_2d' as [ymin, xmin, ymax, xmax] scaled from 0 to 1000 pointing to the exact region.
-- For PDF files, you MUST include the 'page' number (starting from 1). NEVER omit the page for a PDF citation.
+- You MUST set 'fileName' to the EXACT source filename listed above (for example "homework.pdf", not "homework.pdf::page-2.png").
+- You MUST return 'box_2d' as [ymin, xmin, ymax, xmax] scaled from 0 to 1000 pointing to the exact region on that page image.
+- For multi-page PDFs that were converted into page images, you MUST include the 'page' number shown in the manifest (starting from 1).
 - Include a 'confidence' score from 0 to 100 for how accurately the box_2d matches the referenced region.
 If a point is not tied to any specific region, still include fileName but omit box_2d.`;
 
@@ -152,6 +171,13 @@ If a point is not tied to any specific region, still include fileName but omit b
           for (const card of result.criteriaCards) {
             if (card.citations) {
               card.citations = card.citations.map((c: any) => {
+                if (c.fileName) {
+                  const normalized = normalizeCitationFileName(c.fileName);
+                  c.fileName = normalized.fileName;
+                  if (normalized.page != null && c.page == null) {
+                    c.page = normalized.page;
+                  }
+                }
                 if (c.confidence < 70) {
                   delete c.box_2d;
                   delete c.page;

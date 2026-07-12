@@ -2,15 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { toast } from "sonner";
 import CitationPanel, { GradingResult, Citation } from "@/components/CitationPanel";
-import ImageViewer from "@/components/ImageViewer";
-
-const PdfViewer = dynamic(() => import("@/components/PdfViewer"), {
-  ssr: false,
-  loading: () => <div className="flex-1 flex items-center justify-center bg-muted/10 rounded-lg border border-muted"><div className="animate-spin w-8 h-8 border-4 border-accent border-t-transparent rounded-full"></div></div>
-});
+import DocumentViewer from "@/components/DocumentViewer";
+import { flattenDocumentsForUpload, ViewableDocument } from "@/lib/viewableDocument";
 
 type StepStatus = "pending" | "active" | "done";
 
@@ -22,6 +17,7 @@ type PipelineStep = {
 };
 
 const STEP_LABELS = [
+  "Converting PDF pages to images",
   "Uploading files to Gemini",
   "Analysing document",
   "Selecting rubric",
@@ -50,8 +46,8 @@ function StepIcon({ status }: { status: StepStatus }) {
 }
 
 export default function Home() {
-  const [files, setFiles] = useState<File[]>([]);
-  const [activeFileIndex, setActiveFileIndex] = useState(0);
+  const [documents, setDocuments] = useState<ViewableDocument[]>([]);
+  const [activeDocumentIndex, setActiveDocumentIndex] = useState(0);
   const [gradingResult, setGradingResult] = useState<GradingResult | null>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [steps, setSteps] = useState<PipelineStep[]>([]);
@@ -72,12 +68,12 @@ export default function Home() {
   // Auto-switch tabs when hovering a citation
   useEffect(() => {
     if (hoveredCitation?.fileName) {
-      const idx = files.findIndex(f => f.name === hoveredCitation.fileName);
-      if (idx !== -1 && idx !== activeFileIndex) {
-        setActiveFileIndex(idx);
+      const idx = documents.findIndex((document) => document.sourceFileName === hoveredCitation.fileName);
+      if (idx !== -1 && idx !== activeDocumentIndex) {
+        setActiveDocumentIndex(idx);
       }
     }
-  }, [hoveredCitation, files, activeFileIndex]);
+  }, [hoveredCitation, documents, activeDocumentIndex]);
 
   const initSteps = (): PipelineStep[] =>
     STEP_LABELS.map(label => ({ label, status: "pending", startedAt: null, doneAt: null }));
@@ -86,8 +82,8 @@ export default function Home() {
     const selectedFiles = Array.from(e.target.files || []);
     if (selectedFiles.length === 0) return;
 
-    setFiles(selectedFiles);
-    setActiveFileIndex(0);
+    setDocuments([]);
+    setActiveDocumentIndex(0);
     setGradingResult(null);
     setError(null);
     setIsGrading(true);
@@ -98,8 +94,30 @@ export default function Home() {
     });
 
     try {
+      setSteps((prev) => prev.map((step, index) =>
+        index === 0 ? { ...step, status: "active", startedAt: Date.now() } : step
+      ));
+
+      const { buildViewableDocuments } = await import("@/lib/buildViewableDocuments");
+      const viewableDocuments = await buildViewableDocuments(selectedFiles);
+      setDocuments(viewableDocuments);
+
+      setSteps((prev) => prev.map((step, index) =>
+        index === 0
+          ? {
+              ...step,
+              label: viewableDocuments.some((document) => document.pages.length > 1)
+                ? "Converted PDF pages to images"
+                : "Prepared files for grading",
+              status: "done",
+              doneAt: Date.now(),
+            }
+          : step
+      ));
+
+      const uploadFiles = flattenDocumentsForUpload(viewableDocuments);
       const formData = new FormData();
-      selectedFiles.forEach(f => formData.append("file", f));
+      uploadFiles.forEach((file) => formData.append("file", file));
 
       const res = await fetch("/api/grade", { method: "POST", body: formData });
       if (!res.body) throw new Error("No response stream");
@@ -123,14 +141,14 @@ export default function Home() {
           if (event.type === "step") {
             const label = event.label ?? STEP_LABELS[event.index] ?? "";
             setSteps(prev => prev.map((s, i) =>
-              i === event.index
+              i === event.index + 1
                 ? { ...s, label, status: "active", startedAt: Date.now() }
                 : s
             ));
           } else if (event.type === "step_done") {
             const detail = event.detail ? ` (${event.detail})` : "";
             setSteps(prev => prev.map((s, i) =>
-              i === event.index
+              i === event.index + 1
                 ? { ...s, label: s.label.replace(/\.\.\.$/, "") + detail, status: "done", doneAt: Date.now() }
                 : s
             ));
@@ -163,7 +181,7 @@ export default function Home() {
         </Link>
       </header>
 
-      {files.length === 0 && !isGrading && (
+      {documents.length === 0 && !isGrading && (
         <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-muted rounded-xl bg-muted/5">
           <label className="flex flex-col items-center cursor-pointer p-8">
             <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
@@ -209,7 +227,7 @@ export default function Home() {
           <p className="font-semibold mb-1">Error grading homework</p>
           <p className="text-sm">{error}</p>
           <button
-            onClick={() => { setError(null); setFiles([]); }}
+            onClick={() => { setError(null); setDocuments([]); }}
             className="mt-3 text-sm underline cursor-pointer"
           >
             Try again
@@ -217,34 +235,31 @@ export default function Home() {
         </div>
       )}
 
-      {files.length > 0 && gradingResult && (
+      {documents.length > 0 && gradingResult && (
         <div className="flex-1 flex flex-row gap-4 md:gap-8 items-start">
           {/* Left column: Viewer(s) */}
           <div className="flex-1 min-w-0 sticky top-8 h-[calc(100vh-4rem)] flex flex-col">
-            {files.length > 1 && (
+            {documents.length > 1 && (
               <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 custom-scrollbar">
-                {files.map((f, i) => (
+                {documents.map((document, i) => (
                   <button
                     key={i}
-                    onClick={() => setActiveFileIndex(i)}
-                    className={`px-3 py-1.5 text-xs font-mono rounded-md whitespace-nowrap transition-colors ${activeFileIndex === i ? 'bg-accent text-accent-foreground' : 'bg-muted/50 hover:bg-muted text-muted-foreground'}`}
+                    onClick={() => setActiveDocumentIndex(i)}
+                    className={`px-3 py-1.5 text-xs font-mono rounded-md whitespace-nowrap transition-colors ${activeDocumentIndex === i ? 'bg-accent text-accent-foreground' : 'bg-muted/50 hover:bg-muted text-muted-foreground'}`}
                   >
-                    {f.name}
+                    {document.sourceFileName}
                   </button>
                 ))}
               </div>
             )}
 
             <div className="flex-1 min-h-0 bg-muted/10 border border-muted rounded-lg overflow-hidden flex flex-col">
-              {(() => {
-                const activeFile = files[activeFileIndex];
-                if (!activeFile) return null;
-                if (activeFile.type === "application/pdf") {
-                  return <PdfViewer file={activeFile} hoveredCitation={hoveredCitation} />;
-                } else {
-                  return <ImageViewer file={activeFile} hoveredCitation={hoveredCitation} />;
-                }
-              })()}
+              {documents[activeDocumentIndex] && (
+                <DocumentViewer
+                  document={documents[activeDocumentIndex]}
+                  hoveredCitation={hoveredCitation}
+                />
+              )}
             </div>
           </div>
 
@@ -253,7 +268,7 @@ export default function Home() {
             <div className="mb-4 pb-4 border-b border-muted flex justify-between items-center shrink-0">
               <h2 className="font-semibold">Grading Results</h2>
               <button
-                onClick={() => { setFiles([]); setGradingResult(null); }}
+                onClick={() => { setDocuments([]); setGradingResult(null); }}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               >
                 Start Over
