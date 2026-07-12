@@ -13,6 +13,7 @@ export type Citation = {
   box_2d?: [number, number, number, number];
   confidence: number;
   reasoning?: string;
+  area?: number;
 };
 
 export type CriteriaCard = {
@@ -103,11 +104,19 @@ export default function CitationPanel({
                         {c.reasoning && (
                           <div className="text-foreground mt-1">"{c.reasoning}"</div>
                         )}
-                        {c.box_2d && (
-                          <div className="text-[10px] font-mono text-accent mt-1 opacity-80">
-                            [Region Referenced]
-                          </div>
-                        )}
+                        <div className="flex gap-3 text-[10px] font-mono mt-1 opacity-80">
+                          {c.box_2d ? (
+                            <span className="text-accent">[Region Referenced]</span>
+                          ) : (
+                            <span className="text-muted-foreground">[No Region]</span>
+                          )}
+                          <span className={c.confidence >= 70 ? "text-green-600/80 dark:text-green-400/80" : "text-destructive"}>
+                            Conf: {c.confidence}%
+                          </span>
+                          {c.area !== undefined && (
+                            <span className="text-muted-foreground">Area: {c.area.toLocaleString()}</span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}

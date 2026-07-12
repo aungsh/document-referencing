@@ -156,6 +156,7 @@ If a point isn't tied to a specific passage, still provide the correct fileName 
                 } else if (c.box_2d && Array.isArray(c.box_2d) && c.box_2d.length === 4) {
                   const [ymin, xmin, ymax, xmax] = c.box_2d;
                   const area = (ymax - ymin) * (xmax - xmin);
+                  c.area = area;
                   if (area > 8000000) {
                     delete c.box_2d;
                     delete c.page;
