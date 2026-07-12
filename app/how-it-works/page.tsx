@@ -29,7 +29,7 @@ export default function HowItWorks() {
           How it Works
         </h1>
         <p className="text-muted-foreground text-lg leading-relaxed">
-          A walkthrough of the multi-stage grading pipeline: how documents are analysed, how subjects are detected, and how every piece of feedback gets pinned to an exact location on the page.
+          A walkthrough of the multi-stage grading pipeline: how PDFs are converted to page images, how documents are analysed, how subjects are detected, and how every piece of feedback gets pinned to an exact location on the page.
         </p>
       </div>
 
@@ -38,22 +38,28 @@ export default function HowItWorks() {
         {/* 01 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            01. Uploading and Reading Documents
+            01. Uploading and Converting Documents
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              When you upload a file, it is sent to the Gemini Files API. Gemini stores a temporary copy and gives back a <code>fileUri</code>. That URI can then be included directly in a prompt as a first-class part, alongside your text instructions.
+              When you upload files, the browser prepares them before anything is sent to the server. Plain images are used as-is. PDFs are rasterized into one PNG per page using pdf.js in the browser, so Gemini and the viewer both work from the same visual representation.
             </p>
             <p>
-              Gemini reads PDFs and images natively. You do not need to extract text, run OCR, or build any preprocessing pipeline. You just pass the file reference and ask your question.
+              Each converted page is named with an internal suffix like <code>homework.pdf::page-2.png</code>. The grading API maps those back to the original filename and page number in citations, so the UI still shows <code>homework.pdf (Page 2)</code>.
+            </p>
+            <p>
+              After conversion, the page images are uploaded to the Gemini Files API. Gemini stores a temporary copy and returns a <code>fileUri</code> for each file, which is then included directly in a prompt as a first-class part alongside your text instructions.
             </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// Upload the file to Gemini's file storage
+              <code>{`// Client: convert each PDF page to a PNG before upload
+const pages = await pdfToPageImages(file); // pdf.js → canvas → blob
+
+// Server: upload page images to Gemini
 const uploadedFile = await ai.files.upload({
   file: tempFilePath,
-  config: { mimeType: file.type },
+  config: { mimeType: "image/png", displayName: file.name },
 });
 
 // Reference the file in your prompt
@@ -72,8 +78,13 @@ const response = await ai.models.generateContent({
 
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`
-Upload PDF
+              <code>{`Upload PDF or image
+      │
+      ▼
+Convert PDF pages to PNG (client)
+      │
+      ▼
+Upload page images to Gemini
       │
       ▼
 Gemini identifies subject
@@ -85,7 +96,7 @@ Select grading rubric
 Grade using rubric
       │
       ▼
-Extract citations
+Extract citations (box_2d + page)
       │
       ▼
 Validate citations
@@ -103,7 +114,7 @@ Return JSON`}</code>
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Before any grading happens, a lightweight first call is made to analyse the submission. The model reads the uploaded file and returns a small JSON object describing what it sees: the subject (e.g. Mathematics, English, History), the assignment type, the estimated education level, and the language of the document.
+              Before any grading happens, a lightweight first call is made to analyse the submission. The model reads the uploaded page images and returns a small JSON object describing what it sees: the subject (e.g. Mathematics, English, History), the assignment type, the estimated education level, and the language of the document.
             </p>
             <p>
               This step runs quickly because the prompt is minimal and the output is small. Its only job is to answer: what kind of homework is this?
@@ -164,10 +175,13 @@ export function getRubricForSubject(subject: string): string {
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              The second and main Gemini call does the actual grading. It receives the file again along with the selected rubric and a strict JSON schema. The model must return its feedback in a structured format called criteria cards.
+              The second and main Gemini call does the actual grading. It receives the page images again along with the selected rubric and a strict JSON schema. The model must return its feedback in a structured format called criteria cards.
             </p>
             <p>
-              Each criteria card corresponds to one grading dimension from the rubric. Inside each card, the model also returns citations: references to the exact location in the document that supports its observation. Each citation includes the filename, page number (for PDFs), and a bounding box coordinate set pointing to the specific region.
+              Each criteria card corresponds to one grading dimension from the rubric. Inside each card, the model also returns citations: references to the exact location in the document that supports its observation. Each citation includes the original filename, page number (for multi-page PDFs), and a <code>box_2d</code> bounding box pointing to the specific region on that page image.
+            </p>
+            <p>
+              Because Gemini grades the same PNGs the browser displays, the spatial coordinates it returns map directly onto what you see on screen. There is no separate PDF text layer or fuzzy quote matching step.
             </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
@@ -207,7 +221,7 @@ export function getRubricForSubject(subject: string): string {
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              After grading, the server runs a validation pass over every citation before sending anything to the browser. Two types of bad citations are removed automatically.
+              After grading, the server runs a validation pass over every citation before sending anything to the browser. Citation filenames are normalized back to the original source name (for example, <code>homework.pdf::page-2.png</code> becomes <code>homework.pdf</code> with <code>page: 2</code>). Then two types of bad citations are removed automatically.
             </p>
             <ul className="space-y-3 pl-4 border-l-2 border-muted">
               <li>
@@ -230,10 +244,15 @@ export function getRubricForSubject(subject: string): string {
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Gemini returns bounding boxes as <code>[ymin, xmin, ymax, xmax]</code>, each value scaled from 0 to 1000 where 0 is the top-left corner and 1000 is the bottom-right. Getting those coordinates to appear in exactly the right place on screen requires different approaches for images and PDFs.
+              Gemini returns bounding boxes as <code>[ymin, xmin, ymax, xmax]</code>, each value scaled from 0 to 1000 where 0 is the top-left corner and 1000 is the bottom-right. Every document — whether it started as a photo or a PDF — is displayed as an image, so the same overlay logic applies everywhere.
             </p>
 
-            <h3 className="font-semibold pt-2">Images: accounting for letterboxing</h3>
+            <h3 className="font-semibold pt-2">One viewer for all documents</h3>
+            <p>
+              <code>DocumentViewer</code> wraps <code>ImageViewer</code> and handles pagination for multi-page PDFs. When you hover a citation, it switches to the cited page and draws the highlight on that page&apos;s PNG. Single-image uploads skip pagination and render directly.
+            </p>
+
+            <h3 className="font-semibold pt-2">Accounting for letterboxing</h3>
             <p>
               Images are displayed with <code>object-contain</code>, which preserves the aspect ratio by adding empty space (letterboxing) along whichever axis does not fill the element. The overlay div is positioned absolutely inside the same container, so if you place it at <code>top: box[0]/10%</code> you are computing a percentage of the <em>element bounding box</em>, not the <em>actual pixel area of the image</em>. On any image that is not perfectly square, the letterbox offset shifts every box by the wrong amount.
             </p>
@@ -241,39 +260,18 @@ export function getRubricForSubject(subject: string): string {
               The fix is to compute the rendered image rect explicitly: derive the scale factor from <code>Math.min(elemW/natW, elemH/natH)</code>, multiply back to get the rendered width and height, then calculate the top and left offsets as <code>(elemDim - renderedDim) / 2</code>. All four overlay positions are then in pixels relative to the image pixel area, not the element box. A <code>ResizeObserver</code> on the image element keeps this recomputed whenever the layout changes.
             </p>
 
-            <h3 className="font-semibold pt-2">PDFs: why percentages give wrong positions</h3>
+            <h3 className="font-semibold pt-2">Why PDFs are converted to images</h3>
             <p>
-              For PDF pages the letterbox problem does not apply, but a different CSS subtlety does. The overlay div uses <code>position: absolute</code> inside a <code>position: relative</code> wrapper. For absolutely-positioned elements, <code>height: X%</code> resolves to a percentage of the containing block's height. If that containing block's height is determined by its content flow rather than being explicitly set, some browsers resolve the percentage incorrectly or against the wrong measurement. The result is that vertical positions are rendered at the wrong offset even though horizontal positions look fine.
-            </p>
-            <p>
-              The correct approach is to avoid percentage heights entirely and instead measure the exact canvas pixel dimensions at runtime, then use <code>px</code> units.
-            </p>
-
-            <h3 className="font-semibold pt-2">PDFs: the timing problem</h3>
-            <p>
-              <code>react-pdf</code> renders a PDF page asynchronously. The canvas element appears in the DOM after React commits, often one animation frame after the React component finishes rendering. This means a <code>useEffect</code> that runs synchronously after render might query the canvas before it exists, returning zero dimensions.
-            </p>
-            <p>
-              Three mechanisms are layered together to guarantee a measurement is always captured:
-            </p>
-            <ul className="space-y-2 pl-4 border-l-2 border-muted">
-              <li>
-                <strong><code>useLayoutEffect</code></strong> fires synchronously after the DOM is mutated, before the browser paints. This catches the canvas immediately if react-pdf has added it by this point.
-              </li>
-              <li>
-                <strong><code>requestAnimationFrame</code></strong> is scheduled inside the layout effect. It fires after the next browser paint, catching the canvas in the common case where react-pdf finishes one frame after the React commit.
-              </li>
-              <li>
-                <strong><code>onRenderSuccess</code></strong> is a prop on the react-pdf <code>Page</code> component that fires when the library itself confirms rendering is complete. This is the most reliable signal but the least timely.
-              </li>
-            </ul>
-            <p>
-              A <code>ResizeObserver</code> on the wrapper div keeps all measurements updated if the window is resized after the initial paint.
+              Rendering PDFs directly with <code>react-pdf</code> and overlaying boxes on the canvas was unreliable: Gemini sees a rasterized view of the page, but the client was measuring a separately rendered canvas with different timing and sizing behaviour. Converting each PDF page to a PNG once — and using that same PNG for both grading and display — keeps the coordinate space identical end to end.
             </p>
           </div>
           <div className="mt-6 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// --- Images: letterbox-corrected pixel positions ---
+              <code>{`// Client: rasterize PDF pages before upload and display
+const pages = await pdfToPageImages(file);
+// → homework.pdf::page-1.png, homework.pdf::page-2.png, ...
+
+// Viewer: letterbox-corrected pixel positions (images + PDF pages)
 const scale = Math.min(elemW / natW, elemH / natH); // object-contain
 const renderedW = natW * scale;
 const renderedH = natH * scale;
@@ -287,26 +285,10 @@ const highlight = {
   width:  ((box[3] - box[1]) / 1000) * renderedW   + "px",
 };
 
-// --- PDFs: measure actual canvas pixel size, then use px units ---
-// Three-layer approach to capture canvas dimensions reliably:
-
-useLayoutEffect(() => {
-  measureCanvas();                            // 1. sync after DOM commit
-  const raf = requestAnimationFrame(measureCanvas); // 2. after next paint
-  return () => cancelAnimationFrame(raf);
-}, [currentPage]);
-
-// 3. react-pdf fires this when the canvas is truly ready
-<Page onRenderSuccess={measureCanvas} ... />
-
-// Once measured, compute positions in px (not %)
-const { width: W, height: H } = pagePixelSize;
-const highlight = {
-  top:    (box[0] / 1000) * H + "px",
-  left:   (box[1] / 1000) * W + "px",
-  height: ((box[2] - box[0]) / 1000) * H + "px",
-  width:  ((box[3] - box[1]) / 1000) * W + "px",
-};`}</code>
+// Citation matching uses the original source filename + page
+const matches =
+  citation.fileName === document.sourceFileName &&
+  (citation.page == null || citation.page === currentPage);`}</code>
             </pre>
           </div>
         </section>
