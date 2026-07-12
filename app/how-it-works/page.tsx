@@ -69,6 +69,31 @@ const response = await ai.models.generateContent({
 });`}</code>
             </pre>
           </div>
+
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre>
+              <code>{`
+Upload PDF
+      │
+      ▼
+Gemini identifies subject
+      │
+      ▼
+Select grading rubric
+      │
+      ▼
+Grade using rubric
+      │
+      ▼
+Extract citations
+      │
+      ▼
+Validate citations
+      │
+      ▼
+Return JSON`}</code>
+            </pre>
+          </div>
         </section>
 
         {/* 02 */}
