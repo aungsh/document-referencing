@@ -29,42 +29,41 @@ export default function HowItWorks() {
           How it Works
         </h1>
         <p className="text-muted-foreground text-lg leading-relaxed">
-          How to use the Gemini API to analyze documents and get back
-          structured, source-linked responses.
+          A walkthrough of the multi-stage grading pipeline: how documents are analysed, how subjects are detected, and how every piece of feedback gets pinned to an exact location on the page.
         </p>
       </div>
 
       <div className="space-y-16">
+
         {/* 01 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            01. The Core Idea
+            01. Uploading and Reading Documents
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              The model reads the document as part of the prompt and generates a
-              response grounded in its contents. You don&apos;t need to extract
-              text yourself or build a RAG pipeline, the model does it natively.
+              When you upload a file, it is sent to the Gemini Files API. Gemini stores a temporary copy and gives back a <code>fileUri</code>. That URI can then be included directly in a prompt as a first-class part, alongside your text instructions.
+            </p>
+            <p>
+              Gemini reads PDFs and images natively. You do not need to extract text, run OCR, or build any preprocessing pipeline. You just pass the file reference and ask your question.
             </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// Step 1: Upload the file
+              <code>{`// Upload the file to Gemini's file storage
 const uploadedFile = await ai.files.upload({
   file: tempFilePath,
   config: { mimeType: file.type },
 });
 
-// Step 2: Pass the fileUri into the prompt
+// Reference the file in your prompt
 const response = await ai.models.generateContent({
-  model: "gemini-2.5-flash",
+  model: "gemini-3.1-flash-lite",
   contents: [{
     role: "user",
     parts: [
-      // The document itself — Gemini reads this natively
       { fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType } },
-      // Your instructions
-      { text: prompt },
+      { text: "Your grading instructions here..." },
     ],
   }],
 });`}</code>
@@ -75,50 +74,26 @@ const response = await ai.models.generateContent({
         {/* 02 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            02. Getting Structured References Back
+            02. Stage 1: Document Analysis
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              By default, Gemini returns free-form text. To get back
-              machine-readable citations, you use{" "}
-              <strong>structured output</strong>, defining a JSON schema so the
-              model is forced to return a specific shape.
+              Before any grading happens, a lightweight first call is made to analyse the submission. The model reads the uploaded file and returns a small JSON object describing what it sees: the subject (e.g. Mathematics, English, History), the assignment type, the estimated education level, and the language of the document.
             </p>
             <p>
-              For each point the model makes, we instruct it to include the
-              source file name, the page number, and an exact verbatim quote
-              from the document. This is the key: the model is not summarizing
-              or paraphrasing, it must pull a real string directly from the
-              source.
+              This step runs quickly because the prompt is minimal and the output is small. Its only job is to answer: what kind of homework is this?
             </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// Define the schema for each citation
-const citationSchema = {
-  type: Type.OBJECT,
-  properties: {
-    point:    { type: Type.STRING },   // the grading observation
-    fileName: { type: Type.STRING },   // which file it came from
-    page:     { type: Type.INTEGER },  // page number (PDFs)
-    quote:    { type: Type.STRING },   // verbatim text from the document
-    box_2d:   { type: Type.ARRAY },    // region coordinates (images)
-  },
-};
-
-// Pass the schema to the API call
-const response = await ai.models.generateContent({
-  model: "gemini-2.5-flash",
-  contents: [...],
-  config: {
-    responseMimeType: "application/json",
-    responseSchema: responseSchema,   // enforces the output shape
-  },
-});
-
-// The response is valid JSON matching your schema
-const result = JSON.parse(response.text);
-// result.strengths[0].quote === "exact text from the document"`}</code>
+              <code>{`// Stage 1 response from Gemini
+{
+  "subject": "Mathematics",
+  "assignmentType": "Problem Set",
+  "educationLevel": "Secondary",
+  "language": "English",
+  "confidence": 0.97
+}`}</code>
             </pre>
           </div>
         </section>
@@ -126,59 +101,32 @@ const result = JSON.parse(response.text);
         {/* 03 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            03. PDFs vs Images
+            03. Stage 2: Rubric Selection
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              Both work the same way at the API level, you upload the file and
-              pass the <code>fileUri</code>. The difference is in what you ask
-              the model to return.
+              Once the subject is known, the backend selects the matching grading rubric from a library of subject-specific instruction sets. Each subject has its own rubric file that defines what to focus on.
             </p>
-            <ul className="space-y-3 pl-4 border-l-2 border-muted">
-              <li>
-                <strong>PDFs:</strong> Ask the model for a <code>quote</code> (a
-                verbatim sentence from the text) and a <code>page</code> number.
-                The model can read the full text layer of a PDF natively.
-              </li>
-              <li>
-                <strong>Images:</strong> There is no text layer to quote.
-                Instead, Gemini&apos;s native{" "}
-                <strong>spatial understanding</strong> lets you ask it to return{" "}
-                <code>box_2d</code> coordinates, a bounding box{" "}
-                <code>[ymin, xmin, ymax, xmax]</code> (scaled 0–1000) pointing
-                to the exact region of the image it is referencing. No OCR
-                required.
-              </li>
-            </ul>
+            <p>
+              A Mathematics rubric tells the model to check conceptual understanding, working steps, arithmetic accuracy, and formula usage. An English rubric focuses on grammar, vocabulary, organisation, and writing style. A History rubric asks about factual accuracy, use of evidence, and argument quality. The right rubric is loaded and injected into the second Gemini call, keeping prompts focused and precise.
+            </p>
           </div>
           <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
             <pre>
-              <code>{`// Prompt that handles both file types
-const prompt = \`
-The uploaded files are:
-File 1: "homework.pdf"
-File 2: "photo.png"
-
-For every point, set 'fileName' to the exact filename above.
-- PDF: include 'page' and a verbatim 'quote' from the text.
-- Image: return 'box_2d' as [ymin, xmin, ymax, xmax] (0–1000).
+              <code>{`// rubrics/math.ts
+export const mathRubric = \`
+Evaluate against the following criteria:
+1. Conceptual Understanding
+2. Working (step-by-step logic)
+3. Accuracy (distinguish arithmetic vs reasoning errors)
+4. Formula Usage
 \`;
 
-// Example output from Gemini:
-{
-  "strengths": [
-    {
-      "point": "Clear argument structure",
-      "fileName": "homework.pdf",
-      "page": 2,
-      "quote": "The evidence suggests a strong correlation..."
-    },
-    {
-      "point": "Neat diagram layout",
-      "fileName": "photo.png",
-      "box_2d": [120, 80, 400, 650]
-    }
-  ]
+// rubrics/index.ts
+export function getRubricForSubject(subject: string): string {
+  if (subject.includes("math")) return mathRubric;
+  if (subject.includes("english")) return englishRubric;
+  // ...
 }`}</code>
             </pre>
           </div>
@@ -187,22 +135,112 @@ For every point, set 'fileName' to the exact filename above.
         {/* 04 */}
         <section>
           <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
-            04. User Reassurance &amp; Uploads
+            04. Stage 3 and 4: Grading and Citations
           </h2>
           <div className="space-y-4 text-foreground leading-relaxed">
             <p>
-              To reassure users, you can show a popup confirming their document
-              was received and display the raw content on screen.{" "}
-              <strong>This is independent of the Gemini API</strong>.
+              The second and main Gemini call does the actual grading. It receives the file again along with the selected rubric and a strict JSON schema. The model must return its feedback in a structured format called criteria cards.
             </p>
             <p>
-              The upload confirmation is standard frontend UI triggered when a
-              file is saved to your database or cloud storage (e.g., S3).
-              Showing the raw document alongside the AI response is then just a
-              matter of rendering the file from its stored URL in a viewer.
+              Each criteria card corresponds to one grading dimension from the rubric. Inside each card, the model also returns citations: references to the exact location in the document that supports its observation. Each citation includes the filename, page number (for PDFs), and a bounding box coordinate set pointing to the specific region.
+            </p>
+          </div>
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre>
+              <code>{`// Example output from Stage 3
+{
+  "subject": "Mathematics",
+  "estimatedScore": "72 / 100",
+  "overallSummary": "The student demonstrates...",
+  "criteriaCards": [
+    {
+      "criterionName": "Working",
+      "feedback": "Several steps are skipped on question 3...",
+      "citations": [
+        {
+          "fileName": "homework.pdf",
+          "page": 2,
+          "box_2d": [340, 80, 520, 920],
+          "confidence": 91,
+          "reasoning": "Question 3 working area"
+        }
+      ]
+    }
+  ],
+  "teacherDiscussionQuestions": [
+    "Can you walk me through how you set up the equation on page 2?"
+  ]
+}`}</code>
+            </pre>
+          </div>
+        </section>
+
+        {/* 05 */}
+        <section>
+          <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
+            05. Stage 5: Citation Validation
+          </h2>
+          <div className="space-y-4 text-foreground leading-relaxed">
+            <p>
+              After grading, the server runs a validation pass over every citation before sending anything to the browser. Two types of bad citations are removed automatically.
+            </p>
+            <ul className="space-y-3 pl-4 border-l-2 border-muted">
+              <li>
+                <strong>Low confidence:</strong> If the model returns a confidence score below 70, the bounding box is stripped. The written feedback still appears, but no highlight is drawn on the document.
+              </li>
+              <li>
+                <strong>Full-page hallucinations:</strong> If the bounding box covers more than 80% of the page area, it is treated as a vague placeholder and removed. Gemini sometimes does this when it cannot pinpoint a specific region.
+              </li>
+            </ul>
+            <p>
+              The result is that only high-confidence, spatially specific citations ever reach the frontend.
             </p>
           </div>
         </section>
+
+        {/* 06 */}
+        <section>
+          <h2 className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-6">
+            06. How Box Coordinates Map to the Screen
+          </h2>
+          <div className="space-y-4 text-foreground leading-relaxed">
+            <p>
+              Gemini returns bounding boxes as <code>[ymin, xmin, ymax, xmax]</code>, scaled from 0 to 1000, where 0 is the top-left corner of the image or page and 1000 is the bottom-right.
+            </p>
+            <p>
+              <strong>For images:</strong> The browser renders the image with <code>object-contain</code>, which can add empty space (letterboxing) on either side to preserve the aspect ratio. The frontend measures the natural pixel dimensions of the image and the actual rendered element size, calculates exactly how much letterboxing exists, and then converts the 0-to-1000 coordinates into precise pixel positions. The highlight div is drawn over the actual image pixels, not the element bounding box.
+            </p>
+            <p>
+              <strong>For PDFs:</strong> Each page is rendered onto a canvas by the PDF library. A <code>ResizeObserver</code> watches the canvas element and records its exact pixel width and height after each render. When a highlight is triggered, the 0-to-1000 coordinates are multiplied against those real canvas dimensions to produce pixel-accurate positions. This means the highlight stays correct even if the viewer is resized or the PDF page changes.
+            </p>
+          </div>
+          <div className="mt-4 bg-muted/30 p-4 rounded-lg overflow-x-auto text-sm font-mono border border-muted">
+            <pre>
+              <code>{`// Converting box_2d to pixel positions (images)
+const scale = Math.min(elemW / natW, elemH / natH); // object-contain scale
+const renderedW = natW * scale;
+const renderedH = natH * scale;
+const offsetLeft = (elemW - renderedW) / 2; // letterbox gap
+const offsetTop  = (elemH - renderedH) / 2;
+
+const highlight = {
+  top:    offsetTop  + (box[0] / 1000) * renderedH,
+  left:   offsetLeft + (box[1] / 1000) * renderedW,
+  height: ((box[2] - box[0]) / 1000) * renderedH,
+  width:  ((box[3] - box[1]) / 1000) * renderedW,
+};
+
+// For PDFs, same math but using canvas pixel dimensions directly
+const highlight = {
+  top:    (box[0] / 1000) * canvas.clientHeight,
+  left:   (box[1] / 1000) * canvas.clientWidth,
+  height: ((box[2] - box[0]) / 1000) * canvas.clientHeight,
+  width:  ((box[3] - box[1]) / 1000) * canvas.clientWidth,
+};`}</code>
+            </pre>
+          </div>
+        </section>
+
       </div>
 
       <div className="mt-20 pt-8 border-t border-muted">
